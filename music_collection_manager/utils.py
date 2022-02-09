@@ -14,7 +14,7 @@ class Config:
         if not data:
             data['api_key'] = '<LASTFM_API_KEY>'
             data['api_secret'] = '<LASTFM_API_SECRET>'
-            data['username'] = '<LASTFM_USERNAME>'
+            data['usernames'] = ['<LASTFM_USERNAME1>', '<LASTFM_USERNAME2>']
             data['password'] = '<LASTFM_PASSWORD>'
             data['collection_path'] = '~/music/'
             print('Fill out the file', path)
@@ -23,6 +23,6 @@ class Config:
         else:
             self.api_key = data['api_key']
             self.api_secret = data['api_secret']
-            self.username = data['username']
+            self.usernames = data['usernames']
             self.password = data['password']
             self.collection_path = Path(data['collection_path']).expanduser()
