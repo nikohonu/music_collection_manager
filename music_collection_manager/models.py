@@ -25,7 +25,9 @@ class Music:
             data = OggOpus(file)
         elif file.suffix == '.flac':
             data = FLAC(file)
-        artist = data['albumartist'][0] if 'albumartist' in data else data['artist'][0]
+        # artist = data['albumartist'][0] if 'albumartist' in data else data['artist'][0]
+
+        artist = data['artist'][0] if 'artist' in data else data['albumartist'][0]
         album = data['album'][0]
         title = data['title'][0]
         length = data.info.length
@@ -74,8 +76,8 @@ class MusicCollection:
         self._get_data_from_last_fm()
         self.music = sorted(
             self.music, key=lambda music: music.scrobbles, reverse=True)
-        self.create_top_playlist(32)
-        self.create_random_playlist(32)
+        self.create_top_playlist(33)
+        self.create_random_playlist(33)
         self.move_music()
         self._remove_all_sub_folders()
 
