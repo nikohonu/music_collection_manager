@@ -3,8 +3,7 @@ from music_collection_manager.utils import Config
 
 
 def main():
-    config = Config()
-    music_collection = MusicCollection(config)
+    MusicCollection(Config())
 
 
 if __name__ == '__main__':

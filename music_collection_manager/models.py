@@ -1,10 +1,10 @@
 from pathlib import Path
-from random import choice
+from random import choice, randrange
 
 from music_collection_manager.utils import Config
 from mutagen.flac import FLAC
 from mutagen.oggopus import OggOpus
-from pylast import LastFMNetwork
+from pylast import LastFMNetwork, User
 from pylast import md5
 from pylast import PERIOD_12MONTHS
 from pylast import PERIOD_OVERALL
@@ -16,7 +16,8 @@ class Music:
         self.title = title
         self.album = album
         self.length = length
-        self.scrobbles = 0
+        self.overall_scrobbles = 0
+        self.last_year_scrobbles = 0
         self.path = path
 
     @classmethod
@@ -32,19 +33,6 @@ class Music:
         title = data['title'][0]
         length = data.info.length
         return cls(artist, title, album, length, file)
-
-    def _fix_path(self, collection_path: Path):
-        use_path = collection_path / 'used'
-        other_path = collection_path / 'other'
-        if str(self.path).startswith(str(other_path)):
-            return
-        elif str(self.path).startswith(str(use_path)):
-            new_path = Path(str(self.path).replace(
-                str(use_path), str(other_path)))
-        else:
-            new_path = Path(str(self.path).replace(
-                str(collection_path), str(other_path)))
-        self.move(new_path)
 
     def move(self, new_path: Path):
         new_path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,111 +54,140 @@ class Music:
 class MusicCollection:
     def __init__(self, config: Config):
         self.config = config
-        self.music = []
+        self._initial_organization()
+        self.music = self._load_music()
         self.used = set()
-        for extension in ['.opus', '.flac']:
-            for file in self.config.collection_path.glob(f'**/*{extension}'):
-                music_file = Music.from_file(file)
-                music_file._fix_path(self.config.collection_path)
-                self.music.append(music_file)
-        self._get_data_from_last_fm()
-        self.music = sorted(
-            self.music, key=lambda music: music.scrobbles, reverse=True)
-        self.create_top_playlist(33)
-        self.create_random_playlist(33)
-        self.move_music()
-        self._remove_all_sub_folders()
+        self._load_scrobbles()
+        self._generate_classic_playlist()
+        self._generate_top_playlist()
+        self._generate_today_playlist()
+        self._move_music()
+        self._remove_empty_dirs()
 
-    def _get_data_from_last_fm(self):
-        music_all = {}
-        music12 = {}
-        network = LastFMNetwork(api_key=self.config.api_key, api_secret=self.config.api_secret,
-                                username=self.config.usernames[0], password_hash=md5(self.config.password))
-        users = [network.get_user(username)
-                 for username in self.config.usernames]
-        # PERIOD_OVERALL
-        for user in users:
-            data = user.get_top_tracks(PERIOD_OVERALL)
-            for music in data:
-                artist: str = music.item.get_artist().get_name()
-                title: str = music.item.get_title()
-                weight: int = music.weight
-                if (artist, title) not in music:
-                    music_all[(artist, title)] = weight
-                else:
-                    music_all[(artist, title)] += weight
-        # PERIOD_12MONTHS
-        for user in users:
-            data = user.get_top_tracks(PERIOD_12MONTHS)
-            for music in data:
-                artist: str = music.item.get_artist().get_name()
-                title: str = music.item.get_title()
-                weight: int = music.weight
-                if (artist, title) not in music:
-                    music12[(artist, title)] = weight
-                else:
-                    music12[(artist, title)] += weight
-        # sum
-        for m in music_all:
-            if music_all[m] > 100:
-                music_all[m] = music12[m] if m in music12 else 0
-            for music_file in [music_file for music_file in self.music if music_file.title == m[1] and music_file.artist == m[0]]:
-                music_file.scrobbles = music_all[m]
+    def _get_music_files(self):
+        files = []
+        for extension in ['flac', 'opus']:
+            for file in self.config.collection_path.glob(f'**/*.{extension}'):
+                files.append(file)
+        return files
 
-    def _remove_all_sub_folders(self):
-        all_sub_dirs = list(self.config.collection_path.glob('**'))
-        all_sub_dirs.reverse()
-        for path in [dir for dir in all_sub_dirs if dir.name != '.stfolder']:
+    def _initial_organization(self):
+        for file in self._get_music_files():
+            if not str(file).startswith(str(self.config.collection_path / 'used')) and \
+                    not str(file).startswith(str(self.config.collection_path / 'other')):
+                new_file = Path(str(file).replace(str(self.config.collection_path),
+                                                  str(self.config.collection_path / 'other')))
+                new_file.parent.mkdir(parents=True, exist_ok=True)
+                file.replace(new_file)
+
+    def _load_music(self):
+        music = []
+        for file in self._get_music_files():
+            music.append(Music.from_file(file))
+        return music
+
+    def _remove_empty_dirs(self):
+        dirs = list(self.config.collection_path.glob('**'))
+        dirs.reverse()
+        for path in [dir for dir in dirs if dir.name != '.stfolder']:
             try:
                 path.rmdir()
             except:
                 pass
 
-    def print_music(self, music: set):
+    def _load_scrobbles(self):
+        def _load_data(user: User, period: str):
+            tracks = user.get_top_tracks(period)
+            data = {}
+            for track in tracks:
+                artist: str = track.item.get_artist().get_name()
+                title: str = track.item.get_title()
+                weight: int = track.weight
+                if artist not in data:
+                    data[artist] = {}
+                data[artist][title] = weight
+            return data
+
+        def _get_data(data: dict, artist: str, title: str):
+            if artist in data and title in data[artist]:
+                return data[artist][title]
+            else:
+                return 0
+
+        network = LastFMNetwork(api_key=self.config.api_key, api_secret=self.config.api_secret,
+                                username=self.config.username, password_hash=md5(self.config.password))
+        user = network.get_user(self.config.username)
+        overall_data = _load_data(user, PERIOD_OVERALL)
+        last_year_data = _load_data(user, PERIOD_12MONTHS)
+        for music in self.music:
+            music.overall_scrobbles = _get_data(
+                overall_data, music.artist, music.title)
+            music.last_year_scrobbles = _get_data(
+                last_year_data, music.artist, music.title)
+
+    def _print_music(self, music: set):
         for m in music:
-            print(m.artist, '-', m.title, m.scrobbles)
+            print(m.artist, '-', m.title, m.last_year_scrobbles)
 
-    def create_top_playlist(self, count=33):
-        filterd_music = [m for m in self.music[:count*2] if m.scrobbles <= 100]
-        if len(filterd_music) < count:
-            return filterd_music
-        music = set(filterd_music[:count])
-        print('top')
-        self.print_music(music)
-        self.used.update(music)
-        self.save_playlist('top', music)
+    def _generate_top_playlist(self, count=33):
+        music = sorted(
+            self.music, key=lambda music: music.last_year_scrobbles, reverse=True)
+        count = len(music) if count > len(music) else count
+        music = set(music[:count])
+        self._save_playlist('top', music)
 
-    def create_random_playlist(self, count=33):
+    def _generate_classic_playlist(self, count=33):
+        music = sorted(
+            self.music, key=lambda music: music.overall_scrobbles, reverse=True)
+        count = len(music) if count > len(music) else count
+        music = set(music[:count])
+        self._save_playlist('classic', music)
+
+    def _generate_today_playlist(self, count=33):
         music = set()
-        if len(self.music) < count*4:
-            while len(music) < min(count, len(self.music)):
-                music.add(choice(self.music))
-            return music
-        min_scrobbles = min([m.scrobbles for m in self.music])
-        first_part = [m for m in self.music if m.scrobbles == min_scrobbles]
-        second_part = [m for m in self.music[:count*2] if m.scrobbles <= 100]
-        third_part = [m for m in self.music[count*2:]
-                      if m.scrobbles != min_scrobbles]
-        while min(len(music), len(first_part)) < count/3:
-            music.add(choice(first_part))
-        while min(len(music), len(second_part)) < (count/3)*2:
-            music.add(choice(second_part))
-        while min(len(music), len(third_part)) < count:
-            music.add(choice(third_part))
-        print('random')
-        self.print_music(music)
-        self.used.update(music)
-        self.save_playlist('random', music)
+        music_collection = [
+            m for m in self.music if m.last_year_scrobbles <= 100]
+        if len(music_collection) < count*4:
+            while len(music) < min(count, len(music_collection)):
+                music.add(choice(music_collection))
+            self._save_playlist('today', music)
+            return
+        min_scrobbles = min([m.last_year_scrobbles for m in music_collection])
+        first_part = [m for m in music_collection[:count*2]
+                      if m.last_year_scrobbles != min_scrobbles]
+        second_part = [m for m in music_collection[count*2:]
+                       if m.last_year_scrobbles != min_scrobbles]
+        third_part = [
+            m for m in music_collection if m.last_year_scrobbles == min_scrobbles]
 
-    def save_playlist(self, name: str, music: set):
+        need = round(count / 3)
+        while first_part and len(music) < need:
+            music.add(first_part.pop(randrange(len(first_part))))
+        need = round(count / 3 * 2)
+        while second_part and len(music) < need:
+            music.add(second_part.pop(randrange(len(second_part))))
+        need = count
+        while third_part and len(music) < need:
+            music.add(third_part.pop(randrange(len(third_part))))
+        self._save_playlist('today', music)
+
+    def _save_playlist(self, name: str, music: set):
+        print(name)
+        self._print_music(music)
+        self.used.update(music)
         playlist = ''
         for m in music:
-            playlist += str(m.path).replace(str(self.config.collection_path / 'other'),
-                                            str('used')) + '\n'
+            if str(m.path).startswith(str(self.config.collection_path / 'other')):
+                m.move(Path(str(m.path).replace(
+                    str(self.config.collection_path / 'other'),
+                    str(self.config.collection_path / 'used')
+                )))
+            playlist += str(m.path).replace(str(self.config.collection_path), '') + '\n'
         (self.config.collection_path / f'{name}.m3u').write_text(playlist)
 
-    def move_music(self):
-        for music in self.used:
-            new_path = Path(str(music.path).replace(str(self.config.collection_path / 'other'),
-                                                    str(self.config.collection_path / 'used')))
-            music.move(new_path)
+    def _move_music(self):
+        for music in self.music:
+            if music not in self.used:
+                new_path = Path(str(music.path).replace(str(self.config.collection_path / 'used'),
+                                                        str(self.config.collection_path / 'other')))
+                music.move(new_path)

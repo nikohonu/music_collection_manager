@@ -1,7 +1,7 @@
 from os import abort
 from pathlib import Path
 
-from nh_tool.file import save_json
+from nh_tools.file import save_json
 from nh_tools.dirs import get_config_path
 from nh_tools.file import open_json
 
@@ -14,7 +14,7 @@ class Config:
         if not data:
             data['api_key'] = '<LASTFM_API_KEY>'
             data['api_secret'] = '<LASTFM_API_SECRET>'
-            data['usernames'] = ['<LASTFM_USERNAME1>', '<LASTFM_USERNAME2>']
+            data['username'] = '<LASTFM_USERNAME>'
             data['password'] = '<LASTFM_PASSWORD>'
             data['collection_path'] = '~/music/'
             print('Fill out the file', path)
@@ -23,6 +23,6 @@ class Config:
         else:
             self.api_key = data['api_key']
             self.api_secret = data['api_secret']
-            self.usernames = data['usernames']
+            self.username = data['username']
             self.password = data['password']
             self.collection_path = Path(data['collection_path']).expanduser()
