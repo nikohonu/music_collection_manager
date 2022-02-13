@@ -182,7 +182,8 @@ class MusicCollection:
                     str(self.config.collection_path / 'other'),
                     str(self.config.collection_path / 'used')
                 )))
-            playlist += str(m.path).replace(str(self.config.collection_path), '') + '\n'
+            playlist += str(m.path).replace(
+                str(self.config.collection_path) + '/', '') + '\n'
         (self.config.collection_path / f'{name}.m3u').write_text(playlist)
 
     def _move_music(self):
